@@ -6,21 +6,12 @@
 
 @layer base {
   body {
-    margin: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    background: linear-gradient(135deg, #fff5f9 0%, #fef3f7 100%);
-    min-height: 100vh;
+    @apply bg-gradient-to-br from-pink-50 via-purple-50 to-pink-50;
+    font-family: 'Inter', sans-serif;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Playfair Display', 'Inter', serif;
-  }
-
-  code {
-    font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-family: 'Playfair Display', serif;
   }
 }
 
@@ -47,7 +38,7 @@
   }
 }
 
-/* Custom Animations */
+/* Animations */
 @keyframes float {
   0%, 100% { transform: translateY(0px); }
   50% { transform: translateY(-10px); }
@@ -74,15 +65,13 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #fce7f3;
-  border-radius: 10px;
+  @apply bg-pink-100 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(to bottom, #ec489a, #8b5cf6);
-  border-radius: 10px;
+  @apply bg-gradient-to-b from-pink-400 to-purple-400 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(to bottom, #db2777, #7c3aed);
+  @apply from-pink-500 to-purple-500;
 }
