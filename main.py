@@ -208,7 +208,6 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return True
 
-
 @app.get("/api/admin/appointments")
 async def get_admin_appointments(auth: bool = Depends(verify_admin)):
     appointments = []
@@ -364,7 +363,7 @@ def send_reset_email(email: str, token: str):
     
     # Use Gmail SMTP (free)
     sender_email = "your_email@gmail.com"
-    sender_password = "your_app_password"  # Gmail app password
+    sender_password = "your_app_password"  
     
     msg = MIMEMultipart()
     msg["From"] = sender_email
