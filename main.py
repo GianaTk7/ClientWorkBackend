@@ -1,11 +1,22 @@
-from fastapi import FastAPI, HTTPException, status, Query
+from fastapi import FastAPI, HTTPException, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from datetime import datetime, timedelta
-from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field
+from typing import Optional
+from pydantic import BaseModel, EmailStr
 from bson import ObjectId
 import os
+import secrets
 from dotenv import load_dotenv
+from motor.motor_asyncio import AsyncIOMotorClient
+import resend
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from Models import BookingRequest, ForgotPasswordRequest, ResetPasswordRequest
+
+security = HTTPBasic()
+
 
 # Import from database.py instead of defining here
 from utils.database import (
@@ -15,34 +26,10 @@ from utils.database import (
     stylists_collection,
     appointments_collection,
     gallery_collection,
-    get_db,
-    get_users_collection,
-    get_services_collection,
-    get_stylists_collection,
-    get_appointments_collection,
-    get_gallery_collection
 )
 
 load_dotenv()
-
-# ==================== PYDANTIC MODELS ====================
-class BookingRequest(BaseModel):
-    customer_name: str
-    customer_email: EmailStr
-    customer_phone: str
-    stylist_id: str
-    service_id: str
-    appointment_date: str  # ISO format date
-    appointment_time: str  # HH:MM format
-    notes: Optional[str] = None
-
-class ServiceCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    duration_minutes: int
-    price: float
-    category: str
-    image_url: Optional[str] = None
+resend.api_key = os.getenv("RESEND_API_KEY")
 
 # ==================== FASTAPI APP ====================
 app = FastAPI(
@@ -75,7 +62,6 @@ async def root():
         "collections": {
             "users": "users_collection",
             "services": "services_collection",
-            "stylists": "stylists_collection",
             "appointments": "appointments_collection",
             "gallery": "gallery_collection"
         }
@@ -132,122 +118,21 @@ async def get_stylists():
     
     return stylists
 
-@app.get("/api/stylists/{stylist_id}")
-async def get_stylist(stylist_id: str):
-    """Get stylist by ID"""
-    try:
-        stylist = await stylists_collection.find_one({"_id": ObjectId(stylist_id)})
-        if not stylist:
-            raise HTTPException(status_code=404, detail="Stylist not found")
-        
-        stylist["_id"] = str(stylist["_id"])
-        stylist["user_id"] = str(stylist["user_id"])
-        
-        return stylist
-    except:
-        raise HTTPException(status_code=400, detail="Invalid stylist ID")
-
-@app.get("/api/stylists/{stylist_id}/availability")
-async def get_stylist_availability(
-    stylist_id: str,
-    date: str
-):
-    """Get available time slots for a stylist on a specific date"""
-    try:
-        target_date = datetime.fromisoformat(date).date()
-        
-        # Working hours: 9 AM - 6 PM, 30-minute slots
-        working_hours = {"start": 9, "end": 18, "slot_duration": 30}
-        
-        start_of_day = datetime.combine(target_date, datetime.min.time())
-        end_of_day = datetime.combine(target_date, datetime.max.time())
-        
-        # Get existing appointments for this stylist on this date
-        booked_slots = []
-        cursor = appointments_collection.find({
-            "stylist_id": stylist_id,
-            "start_time": {"$gte": start_of_day, "$lte": end_of_day},
-            "status": {"$in": ["confirmed", "pending"]}
-        })
-        
-        async for apt in cursor:
-            booked_slots.append({
-                "start": apt["start_time"],
-                "end": apt["end_time"]
-            })
-        
-        # Generate available slots
-        available_slots = []
-        current_time = datetime.combine(target_date, datetime.min.time().replace(hour=working_hours["start"]))
-        end_time = datetime.combine(target_date, datetime.min.time().replace(hour=working_hours["end"]))
-        
-        while current_time < end_time:
-            slot_end = current_time + timedelta(minutes=working_hours["slot_duration"])
-            
-            is_available = True
-            for booked in booked_slots:
-                if current_time < booked["end"] and slot_end > booked["start"]:
-                    is_available = False
-                    break
-            
-            if is_available:
-                available_slots.append(current_time.strftime("%H:%M"))
-            
-            current_time += timedelta(minutes=working_hours["slot_duration"])
-        
-        return {"available_slots": available_slots}
-        
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error: {str(e)}")
-
 # ==================== BOOKING ENDPOINTS ====================
+
 @app.post("/api/book-appointment")
 async def book_appointment(booking: BookingRequest):
-    """Book an appointment (no login required)"""
-    
     try:
-        # Validate service exists
-        service = await services_collection.find_one({"_id": ObjectId(booking.service_id)})
-        if not service:
-            raise HTTPException(status_code=404, detail="Service not found")
-        
-        # Validate stylist exists
-        stylist = await stylists_collection.find_one({"_id": ObjectId(booking.stylist_id)})
-        if not stylist:
-            raise HTTPException(status_code=404, detail="Stylist not found")
-        
-        # Combine date and time
         appointment_datetime = datetime.fromisoformat(f"{booking.appointment_date}T{booking.appointment_time}")
-        end_datetime = appointment_datetime + timedelta(minutes=service["duration_minutes"])
         
-        # Check if time slot is already booked
-        existing = await appointments_collection.find_one({
-            "stylist_id": booking.stylist_id,
-            "status": {"$in": ["confirmed", "pending"]},
-            "$or": [
-                {"start_time": {"$lt": end_datetime, "$gte": appointment_datetime}},
-                {"end_time": {"$gt": appointment_datetime, "$lte": end_datetime}}
-            ]
-        })
-        
-        if existing:
-            raise HTTPException(status_code=409, detail="Time slot already booked. Please choose another time.")
-        
-        # Create appointment
         new_appointment = {
             "customer_name": booking.customer_name,
             "customer_email": booking.customer_email,
             "customer_phone": booking.customer_phone,
-            "stylist_id": booking.stylist_id,
-            "stylist_name": stylist.get("name", "Stylist"),
-            "service_id": booking.service_id,
-            "service_name": service["name"],
-            "service_price": service["price"],
+            "service_name": booking.service_name,
             "start_time": appointment_datetime,
-            "end_time": end_datetime,
             "status": "confirmed",
             "notes": booking.notes,
-            "total_price": service["price"],
             "created_at": datetime.utcnow()
         }
         
@@ -255,22 +140,12 @@ async def book_appointment(booking: BookingRequest):
         
         return {
             "success": True,
-            "message": "Appointment booked successfully!",
-            "appointment_id": str(result.inserted_id),
-            "appointment_details": {
-                "customer_name": booking.customer_name,
-                "service": service["name"],
-                "stylist": stylist.get("name", "Stylist"),
-                "date": booking.appointment_date,
-                "time": booking.appointment_time,
-                "total_price": service["price"]
-            }
+            "message": "Appointment booked successfully",
+            "appointment_id": str(result.inserted_id)
         }
         
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=400, detail=f"Booking failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/appointments/lookup")
 async def lookup_appointment(email: str, phone: Optional[str] = None):
@@ -285,7 +160,6 @@ async def lookup_appointment(email: str, phone: Optional[str] = None):
     
     async for apt in cursor:
         apt["_id"] = str(apt["_id"])
-        apt["stylist_id"] = str(apt["stylist_id"])
         apt["service_id"] = str(apt["service_id"])
         appointments.append(apt)
     
@@ -320,6 +194,67 @@ async def cancel_appointment(appointment_id: str, email: str):
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e
+        raise HTTPException(status_code=400, detail="Invalid appointment ID")
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "esthermusa@gmail.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "esther123")
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    if credentials.username != ADMIN_EMAIL or credentials.password != ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return True
+
+
+@app.get("/api/admin/appointments")
+async def get_admin_appointments(auth: bool = Depends(verify_admin)):
+    appointments = []
+    cursor = appointments_collection.find().sort("created_at", -1)
+    async for apt in cursor:
+        apt["_id"] = str(apt["_id"])
+        appointments.append(apt)
+    return {"appointments": appointments}
+
+@app.put("/api/admin/appointments/{appointment_id}/status")
+async def update_appointment_status(appointment_id: str, status: str, auth: bool = Depends(verify_admin)):
+    try:
+        await appointments_collection.update_one(
+            {"_id": ObjectId(appointment_id)},
+            {"$set": {"status": status}}
+        )
+        return {"success": True, "message": "Status updated"}
+    except:
+        raise HTTPException(status_code=400, detail="Invalid appointment ID")
+
+@app.delete("/api/admin/appointments/{appointment_id}")
+async def delete_appointment(appointment_id: str, auth: bool = Depends(verify_admin)):
+    try:
+        await appointments_collection.delete_one({"_id": ObjectId(appointment_id)})
+        return {"success": True, "message": "Appointment deleted"}
+    except:
+        raise HTTPException(status_code=400, detail="Invalid appointment ID")
+
+
+@app.put("/api/admin/appointments/{appointment_id}/status")
+async def update_appointment_status(appointment_id: str, status: str, auth: bool = Depends(verify_admin)):
+    try:
+        await appointments_collection.update_one(
+            {"_id": ObjectId(appointment_id)},
+            {"$set": {"status": status}}
+        )
+        return {"success": True, "message": "Status updated"}
+    except:
+        raise HTTPException(status_code=400, detail="Invalid appointment ID")
+
+@app.delete("/api/admin/appointments/{appointment_id}")
+async def delete_appointment(appointment_id: str, auth: bool = Depends(verify_admin)):
+    try:
+        await appointments_collection.delete_one({"_id": ObjectId(appointment_id)})
+        return {"success": True, "message": "Appointment deleted"}
+    except:
         raise HTTPException(status_code=400, detail="Invalid appointment ID")
 
 # ==================== GALLERY ENDPOINTS ====================
@@ -404,6 +339,7 @@ async def get_gallery_images(
 
 @app.get("/api/gallery/{image_id}")
 async def get_gallery_image(image_id: str):
+
     """Get a single gallery image by ID"""
     try:
         image = await gallery_collection.find_one({"_id": ObjectId(image_id), "is_active": True})
@@ -414,3 +350,82 @@ async def get_gallery_image(image_id: str):
         return image
     except:
         raise HTTPException(status_code=400, detail="Invalid image ID")
+    
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    if credentials.username != ADMIN_EMAIL or credentials.password != ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+    return True
+
+def send_reset_email(email: str, token: str):
+    reset_link = f"http://localhost:3000/reset-password?token={token}"
+    
+    # Use Gmail SMTP (free)
+    sender_email = "your_email@gmail.com"
+    sender_password = "your_app_password"  # Gmail app password
+    
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = email
+    msg["Subject"] = "Reset Your Admin Password"
+    
+    body = f"Reset your password here: {reset_link}\n\nThis link expires in 1 hour."
+    msg.attach(MIMEText(body, "plain"))
+    
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+        return True
+    except:
+        return False
+async def forgot_password(request: ForgotPasswordRequest):
+    if request.email != ADMIN_EMAIL:
+        raise HTTPException(status_code=404, detail="Email not found")
+    
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(hours=1)
+    
+    await password_resets_collection.update_one(
+        {"email": request.email},
+        {"$set": {"token": token, "expires_at": expires_at}},
+        upsert=True
+    )
+    
+    try:
+        send_reset_email(request.email, token)
+        return {"success": True, "message": "Reset link sent to your email"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to send email")
+
+@app.post("/api/admin/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    reset_record = await password_resets_collection.find_one({
+        "token": request.token,
+        "expires_at": {"$gt": datetime.utcnow()}
+    })
+    
+    if not reset_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    
+    global ADMIN_PASSWORD
+    ADMIN_PASSWORD = request.new_password
+    
+    import os
+    env_path = ".env"
+    with open(env_path, "r") as f:
+        lines = f.readlines()
+    
+    with open(env_path, "w") as f:
+        for line in lines:
+            if line.startswith("ADMIN_PASSWORD="):
+                f.write(f"ADMIN_PASSWORD={request.new_password}\n")
+            else:
+                f.write(line)
+    
+    await password_resets_collection.delete_many({"email": reset_record["email"]})
+    
+    return {"success": True, "message": "Password reset successfully"}

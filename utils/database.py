@@ -15,6 +15,8 @@ services_collection = db.services
 stylists_collection = db.stylists
 appointments_collection = db.appointments
 gallery_collection = db.gallery
+password_resets_collection = db.password_resets
+
 
 # ==================== HELPER FUNCTIONS ====================
 def get_db():

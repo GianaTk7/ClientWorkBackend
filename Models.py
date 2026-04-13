@@ -34,6 +34,24 @@ class Service(BaseModel):
     class Config:
         populate_by_name = True
 
+
+class BookingRequest(BaseModel):
+    customer_name: str
+    customer_email: EmailStr
+    customer_phone: str
+    service_name: str
+    appointment_date: str
+    appointment_time: str
+    notes: Optional[str] = None
+class ServiceCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    duration_minutes: int
+    price: float
+    category: str
+    image_url: Optional[str] = None
+
+
 # ==================== STYLIST MODEL ====================
 class Stylist(BaseModel):
     id: Optional[str] = Field(alias="_id", default=None)
@@ -85,3 +103,11 @@ class GalleryImage(BaseModel):
     
     class Config:
         populate_by_name = True
+
+        # ==================== PASSWORD RESET MODEL ====================
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str

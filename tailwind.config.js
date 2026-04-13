@@ -1,0 +1,25 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      fontFamily: {
+        'playfair': ['Playfair Display', 'serif'],
+        'inter': ['Inter', 'sans-serif'],
+      },
+      animation: {
+        'float': 'float 3s ease-in-out infinite',
+        'shimmer': 'shimmer 2s infinite',
+        'bounce-slow': 'bounce 2s infinite',
+      },
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+        'hero-pattern': "url('/src/assets/hero-bg.jpg')",
+      }
+    },
+  },
+  plugins: [],
+}
