@@ -361,7 +361,6 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 def send_reset_email(email: str, token: str):
     reset_link = f"http://localhost:3000/reset-password?token={token}"
     
-    # Use Gmail SMTP (free)
     sender_email = "your_email@gmail.com"
     sender_password = "your_app_password"  
     
